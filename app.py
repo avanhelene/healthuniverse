@@ -9,7 +9,6 @@ import math
 import plotly.express as px
 
 geojson_dir = "data/geojson_states"
-
 geojson_file = "data/service_area_df_with_population_counts.geojson"  # Replace with your file path
 
 # Read the GeoJSON file as a GeoPandas DataFrame
