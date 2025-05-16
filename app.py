@@ -195,7 +195,7 @@ tab1, tab2 = st.tabs(["Tab 1", "Tab 2"])
 
 # Content for the first tab
 with tab1:
-    st.write("This is the first tab. Add your content here.")
+    st.write("This is the first tab.")
     
 # Content for the second tab (current content)
 with tab2:
