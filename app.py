@@ -6,13 +6,89 @@ import geopandas as gpd
 import os
 import json
 import math
-import plotly.express as px
+import re
+
+key = os.getenv("API_KEY")
 
 geojson_dir = "data/geojson_states"
-geojson_file = "data/service_area_df_with_population_counts.geojson"  # Replace with your file path
+
+geojson_file = "data/service_area_df_with_population_and_trial_counts.geojson"  # Replace with your file path
 
 # Read the GeoJSON file as a GeoPandas DataFrame
 cancer_center_service_areas = gpd.read_file(geojson_file)
+
+import requests
+import time
+
+control_ui_prompt = """
+"You are an assistant embedded in a web application. Based on user input, you will output a JSON object that controls the behaviour of the app."
+Below is the JSON format with all available options:
+{
+  "select_demographic": "All", "American Indian/Alaska Native NH", "Asian/Pacific Islander NH", "Black NH", "Hispanic", "White NH",
+  "select_sex": "All", "Male", "Female"
+  "select_site": ["Urban", "Rural/Suburban"],
+  "state_selection:" ["Connecticut", "Maine", "Massachusetts", "New Hampshire", "New York", "Rhode Island", "Vermont", "New Jersey", "Pennsylvania"]
+}
+Choose the options that best fit the user input. 'select_demographic' and 'select_sex' can only have one value each, while 'select_site' and 'state_selection' can have multiple values. 
+Do not respond with any other text even if it makes sense to do so.
+
+"""
+
+def call_google_gemini(prompt,
+                       api_key,
+                       gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                       num_retries=3,
+                       delay_after_api_failure=5):
+    """
+    Calls the Google Gemini API to generate content based on a given prompt.
+
+    Args:
+        prompt (str): The input prompt for the Gemini model.
+        api_key (str): Your Google API key.
+        gemini_endpoint (str): The endpoint for the Gemini API.
+        num_retries (int): Number of retries in case of failure.
+        delay_after_api_failure (int): Delay in seconds between retries.
+
+    Returns:
+        dict: The response from the Gemini API.
+    """
+    
+    # construct the endpoint URL with the API key and define payload
+    gemini_endpoint += f"?key={api_key}"
+    headers = {
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "contents": [{
+            "parts":[{"text": prompt}]
+    }]
+    }
+
+    # retry logic for handling API failures
+    for i in range(num_retries + 1):
+        try:
+            response = requests.post(gemini_endpoint, headers=headers, json=payload)
+            if response.status_code == 200:
+                output = response.json()
+                text_output = output['candidates'][0]['content']['parts'][0]['text'].rstrip("\n")
+                input_tokens = output['usageMetadata']['promptTokenCount']
+                output_tokens = output['usageMetadata']['candidatesTokenCount']
+                output = {
+                    "text_output": text_output,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens
+                }
+                return output
+            else:
+                print(f"Error: {response.status_code}, {response.text}")
+        except Exception as e:
+            print(f"Exception occurred: {e}")
+
+        if i < num_retries:
+            print(f"Retrying... ({i + 1}/{num_retries})")
+            time.sleep(delay_after_api_failure)
+        else:
+            raise Exception(f"Failed to call Gemini API after {num_retries} retries")
 
 # Function to load GeoJSON files
 def load_geojson_files(directory, states):
@@ -51,6 +127,8 @@ def calculate_bounds(geojson_files):
 
     return (min_lat, max_lat, min_lon, max_lon)
 
+
+
 # Function to calculate zoom level based on bounds
 def calculate_zoom(min_lat, max_lat, min_lon, max_lon, map_width=350, map_height=350, padding=0.3):
     # Constants for zoom calculation
@@ -85,12 +163,57 @@ def calculate_zoom(min_lat, max_lat, min_lon, max_lon, map_width=350, map_height
     # Use the minimum zoom level and limit it to ZOOM_MAX
     return min(lat_zoom, lon_zoom, ZOOM_MAX)
 
-data = [
-    {"ID": 1, "Name": "Alice", "Age": 25, "City": "New York"},
-    {"ID": 2, "Name": "Bob", "Age": 30, "City": "Los Angeles"},
-    {"ID": 3, "Name": "Charlie", "Age": 35, "City": "Chicago"},
-    {"ID": 4, "Name": "Diana", "Age": 40, "City": "Houston"},
-]
+def get_highest_incidence_cancer_site(df, cancer_site_columns):
+    """
+    Calculate the cancer site with the highest total incidence.
+
+    Args:
+        df (pd.DataFrame): The DataFrame containing cancer site incidence data.
+        cancer_site_columns (list): List of column names representing cancer sites.
+
+    Returns:
+        tuple: A tuple containing the cancer site with the highest incidence and its total value.
+    """
+    # Ensure the columns exist in the DataFrame
+    existing_columns = [col for col in cancer_site_columns if col in df.columns]
+
+    if not existing_columns:
+        raise ValueError("None of the specified cancer site columns exist in the DataFrame.")
+
+    # Calculate the total incidence for each cancer site
+    total_incidence = df[existing_columns].sum()
+
+    # Find the cancer site with the highest total incidence
+    highest_incidence_site = total_incidence.idxmax()
+    highest_incidence_value = total_incidence.max()
+
+    return highest_incidence_site, highest_incidence_value
+
+def calculate_urban_rural_percentage(df):
+    """
+    Calculate the percentage of urban centers compared to the total centers.
+
+    Args:
+        df (pd.DataFrame): The DataFrame containing the "Rurality" column.
+
+    Returns:
+        str: A formatted string reporting the percentage of urban centers.
+    """
+    if "Rurality" not in df.columns:
+        return "The 'Rurality' column is missing in the DataFrame."
+
+    # Count the number of urban and total centers
+    urban_count = df[df["Rurality"] == "Urban"].shape[0]
+    total_count = df.shape[0]
+
+    if total_count == 0:
+        return "No centers found. Cannot calculate the percentage."
+
+    # Calculate the percentage
+    urban_percentage = (urban_count / total_count) * 100
+
+    # Round to the nearest whole number and return as a formatted string
+    return round(urban_percentage)
 
 st.set_page_config(layout="wide")
 
@@ -158,79 +281,147 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-cancer_type_options = ("All Site",
-                        "Brain & ONS",
-                        "Esophagus",
-                        "Leukemia",
-                        "Lung & Bronchus",
-                        "Melanoma of the Skin",
-                        "Oral Cavity & Pharynx",
-                        "Pancreas",
-                        "Stomach",
-                        "Head and Neck",
-                        "Bladder",
-                        "Cervix",
-                        "Colon & Rectum",
-                        "Corpus Uteri & Uterus, NOS",
-                        "Female Breast",
-                        "Kidney & Renal Pelvis",
-                        "Liver & IBD",
-                        "Non-Hodgkin Lymphoma",
-                        "Ovary",
-                        "Prostate",
-                        "Thyroid")
 
-demographic_options = ("All", "American Indian/Alaska Native NH", 
+demographic_options = ["All", "American Indian/Alaska Native NH", 
                        "Asian/Pacific Islander NH",
                        "Black NH",
                        "Hispanic",
-                       "White NH")
+                       "White NH"]
 
 sex_options = ("All", "Male", "Female")
 
-#selected_sites = []
+select_site_options = ["Urban", "Rural/Suburban"]
 
+state_options = ["Connecticut", "Maine", "Massachusetts", "New Hampshire", "New York", "Rhode Island", "Vermont", "New Jersey", "Pennsylvania"]
+
+cancer_sites = ["Brain & ONS",
+                   "Esophagus",
+                   "Leukemia",
+                   "Lung & Bronchus",
+                   "Melanoma of the Skin",
+                   "Oral Cavity & Pharynx",
+                   "Pancreas",
+                   "Stomach",
+                   "Head and Neck",
+                   "Bladder",
+                   "Cervix",
+                   "Colon & Rectum",
+                   "Corpus Uteri & Uterus, NOS",
+                   "Female Breast",
+                   "Kidney & Renal Pelvis",
+                   "Liver & IBD",
+                   "Non-Hodgkin Lymphoma",
+                   "Ovary",
+                   "Prostate",
+                   "Thyroid"]
+
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = "Map" 
+    
+# Initialize session state for the selectbox
+if "select_demographic" not in st.session_state:
+    st.session_state.select_demographic = "All"  # Default value
+
+if "select_sex" not in st.session_state:
+    st.session_state.select_sex = "All"  # Default value
+
+if "select_site" not in st.session_state:
+    st.session_state.select_site = ["Urban", "Rural/Suburban"] 
+    
+if "select_state" not in st.session_state:
+    st.session_state.select_state = state_options
+    
 # Create tabs
-tab1, tab2 = st.tabs(["Tab 1", "Tab 2"])
+tab1, tab2 = st.tabs(["Introduction", "Cancer Center Finder"])
 
 # Content for the first tab
 with tab1:
-    st.write("This is the first tab.")
+    st.write("Welcome to the Cancer Center Finder App!")
+    st.write("This app allows you to explore cancer centers and their service areas across the United States.")
+    st.write("You can filter the data based on various criteria, including patient demographics.")
+    st.write("The app provides a map view and a table view of the cancer centers.")
+    st.write("This app is powered by Streamlit and Google Gemini.")
     
 # Content for the second tab (current content)
 with tab2:
     #st.write(cancer_center_service_areas)
     # Create a two-column layout with the left column narrower
     left_column_top, right_column_top = st.columns([5, 2], gap="small")  # 1:3 width ratio
-    with left_column_top:
-        
-        left_column_top_inner, left_middle_top_inner, right_column_top_inner = st.columns([1,1, 1], gap="small")
-        
-        
-        with left_column_top_inner:
-            st.markdown(
-                """
-                <label for="state-selection">
-                    Select cancer incidence type
-                    <span class="tooltip">ℹ
-                        <span class="tooltiptext">Select one or more states to filter the data</span>
-                    </span>
-                </label>
-                """,
-                unsafe_allow_html=True,
-                )   
-            select_cancer_type = st.selectbox(
-                "",
-                cancer_type_options,
-                index=0,
-                label_visibility="collapsed",
+    
+    
+    with right_column_top:
+        st.markdown(
+            """
+            <label for="">
+            Control App Behavior with LLM Prompt or Generate Summary
+                <span class="tooltip">ℹ
+                    <span class="tooltiptext">Select one or more states to filter the data</span>
+                </span>
+            </label>
+            """,
+            unsafe_allow_html=True,
+        )   
+        txt = st.text_area(
+            "",
+            "",
+            height=80,
+            max_chars=100,
+            label_visibility="collapsed"
             )
 
-        with left_middle_top_inner:
+        if st.button("Control App with Free-Text Instructions", type="primary") and len(txt) > 0:
+            
+            response = call_google_gemini(control_ui_prompt + txt,
+                    api_key = key,
+                    gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                    num_retries=3,
+                    delay_after_api_failure=5)
+            if type(response) == dict:
+                json_string = response["text_output"]
+        
+                #cleaned_json_string = response["text_output"].strip('"')
+                # Use a regular expression to extract the content inside the curly braces
+                match = re.search(r"\{.*\}", json_string, re.DOTALL)
+                if match:
+                    json_string = match.group(0) 
+                
+                    # with open("data/test.txt", "w") as file:
+                    #     file.write(json_string)
+                    gemini_output = json.loads(json_string)
+                    if all(item in ["select_demographic", "select_sex", "select_site", "state_selection"] for item in gemini_output.keys()):
+                        try:
+                            gemini_select_demographic = gemini_output["select_demographic"]
+                            if gemini_select_demographic in demographic_options and len(gemini_select_demographic) > 0:
+                                st.session_state.select_demographic = gemini_select_demographic
+                            gemini_select_sex = gemini_output["select_sex"]
+                            if gemini_select_sex in sex_options and len(gemini_select_sex) > 0:
+                                st.session_state.select_sex = gemini_select_sex
+                            gemini_select_site = gemini_output["select_site"]
+                            if all(item in select_site_options for item in gemini_select_site) and len(gemini_select_site) > 0:
+                                st.session_state.select_site = gemini_select_site
+                            gemini_select_state = gemini_output["state_selection"] 
+                            if all(item in state_options for item in gemini_select_state) and len(gemini_select_state) > 0:
+                                st.session_state.select_state = gemini_select_state
+                            # gemini_select_site = gemini_output["select_site"]
+                            # gemini_state_selection = gemini_output["state_selection"]
+                            
+                        except Exception as e:
+                            st.warning("LLM instruction failed. Please try again.")
+                                
+
+                    
+                
+
+                
+            
+    with left_column_top:
+        
+        left_column_inner, middle_column_inner, right_column_inner = st.columns([1, 1, 1], gap="small")
+        with left_column_inner:
             st.markdown(
                 """
                 <label for="demographic-selection">
-                    Select cancer incidence patient demographic
+                    Select patient demographic to include in table
                     <span class="tooltip">ℹ
                         <span class="tooltiptext">Select one or more states to filter the data</span>
                     </span>
@@ -238,17 +429,27 @@ with tab2:
                 """,
                 unsafe_allow_html=True,
                 )   
+            
+  
+
+            # Button to update the selectbox value
+            
+
             select_demographic = st.selectbox(
                 "",
                 demographic_options,
-                index=0,
-                label_visibility="collapsed",)
+                index=demographic_options.index(st.session_state.select_demographic),
+                label_visibility="collapsed", 
+                key="select_demographic")
 
-        with right_column_top_inner:
+        with middle_column_inner:
+            
+    
+            
             st.markdown(
                 """
                 <label for="sex-selection">
-                    Select cancer incidence patient sex
+                    Select patient sex to include in table
                     <span class="tooltip">ℹ
                         <span class="tooltiptext">Select one or more states to filter the data</span>
                     </span>
@@ -259,17 +460,17 @@ with tab2:
             select_sex = st.selectbox(
                 "",
                 sex_options,
-                index=0,
+                index=sex_options.index(st.session_state.select_sex),
                 label_visibility="collapsed",
+                key="select_sex"
             )
+        with right_column_inner:
 
-        left_column_middle_inner, right_column_middle_inner = st.columns([1, 1], gap="small")
 
-        with left_column_middle_inner:
             st.markdown(
                 """
                 <label for="center-type-selection">
-                    Select cancer center types to incude
+                    Select cancer center rurality
                     <span class="tooltip">ℹ
                         <span class="tooltiptext">Select cancer center types to incude</span>
                     </span>
@@ -279,31 +480,11 @@ with tab2:
                 )   
             select_site_types = st.multiselect(
                 "",
-                ["NCI-designated", "Academic", "Community", "Urban", "Rural"],
-                default=["NCI-designated", "Urban", "Rural"],
+                select_site_options,
+                default=st.session_state.select_site,
                 label_visibility="collapsed",
+                key="select_site"
             )
-        
-        with right_column_middle_inner:
-            st.markdown(
-                """
-                <label for="demographic-selection" style="margin-bottom: 5px; display: block;">
-                    Select order of priority when sorting cancer centers by variable value
-                    <span class="tooltip">ℹ
-                        <span class="tooltiptext">Select one or more states to filter the data</span>
-                    </span>
-                </label>
-                """,
-                unsafe_allow_html=True,
-                )   
-            
-            selection = st.segmented_control("", 
-                ["Cancer incidence then Count of trials", "Count of trials then Cancer incidence"], 
-                selection_mode="single",
-                default=["Cancer incidence then Count of trials"],
-                label_visibility="collapsed"
-                )
-
         st.markdown(
             """
             <label for="">
@@ -317,42 +498,10 @@ with tab2:
         )   
         state_selection = st.multiselect(
                 "",
-                ["Connecticut", "Maine", "Massachusetts", "New Hampshire", "New York", "Rhode Island", "Vermont", "New Jersey", "Pennsylvania"],
-                default=["Connecticut", "Maine", "Massachusetts", "New Hampshire", "New York", "Rhode Island", "Vermont", "New Jersey", "Pennsylvania"],
-                label_visibility="collapsed")
-        
-
-    
-    with right_column_top:
-            st.markdown(
-                """
-                <label for="">
-                Control app behavior with LLM prompt
-                    <span class="tooltip">ℹ
-                        <span class="tooltiptext">Select one or more states to filter the data</span>
-                    </span>
-                </label>
-                """,
-                unsafe_allow_html=True,
-            )   
-            txt = st.text_area(
-                "",
-                "It was the best of times, it was the worst of times, it was the age of "
-                "wisdom, it was the age of foolishness, it was the epoch of belief, it "
-                "was the epoch of incredulity, it was the season of Light, it was the "
-                "season of Darkness, it was the spring of hope, it was the winter of "
-                "despair, (...)",
-                height=123,
-                max_chars=1000,
-                label_visibility="collapsed"
-                )
-            left_buttom_top_inner, right_button_top_inner = st.columns([1,1.2], gap="small")
-        
-            with left_buttom_top_inner:
-                st.button("Control app with LLM prompt", type="primary")
-                
-            with right_button_top_inner:
-                st.button("Generate LLM summary of results", type="primary")
+                state_options,
+                default=st.session_state.select_state,
+                label_visibility="collapsed",
+                key="select_state")
             
     st.markdown(
         """
@@ -364,13 +513,41 @@ with tab2:
     
         # Add content to the right column
     with right_column_bottom:
+        columns_to_display = ["Place Name", "Address", "Rurality"]
   
         incidence_column_start = select_demographic + "_" +  select_sex 
         cancer_center_service_areas_columns = cancer_center_service_areas.columns
-        cancer_center_service_areas_columns = [item for item in cancer_center_service_areas_columns if item.startswith(incidence_column_start)]
-        columns_to_display = ["place_name"]
-        columns_to_display.extend(cancer_center_service_areas_columns)
-        columns_to_display.extend(["address", "latitude", "longitude"])
+        incidence_columns = [item for item in cancer_center_service_areas_columns if item.startswith(incidence_column_start)]
+        
+        columns_to_display.extend(incidence_columns)
+
+
+        columns_to_display.extend([
+            "Total Trial Count",
+            "Leukemia Trial Count",                                              
+            "Corpus Uteri & Uterus, NOS Trial Count",                            
+            "Ovary Trial Count",                                                 
+            "Head and Neck Trial Count",                                         
+            "Colon & Rectum Trial Count",                                        
+            "Female Breast Trial Count",                                         
+            "Lung & Bronchus Trial Count",                                       
+            "Brain & ONS Trial Count",                                           
+            "Prostate Trial Count",                                              
+            "Kidney & Renal Pelvis Trial Count",                                 
+            "Kidney and Renal Pelvis Trial Count",                               
+            "Melanoma of the Skin Trial Count",                                  
+            "Pancreas Trial Count",                                              
+            "Liver & IBD Trial Count",                                          
+            "Oral Cavity & Pharynx Trial Count",                                 
+            "Stomach Trial Count",                                               
+            "Bladder Trial Count",                                               
+            "Latitude", 
+            "Longitude"])
+
+        
+        cancer_center_service_areas = cancer_center_service_areas[cancer_center_service_areas["Rurality"].isin(select_site_types)]
+        cancer_center_service_areas = cancer_center_service_areas[cancer_center_service_areas["State"].isin(state_selection)]
+        
         df_to_display = cancer_center_service_areas[columns_to_display].copy()
         incidence_column_start = incidence_column_start + "_"
         df_to_display.columns = [col[len(incidence_column_start):] if col.startswith(incidence_column_start) else col for col in df_to_display.columns]
@@ -387,7 +564,7 @@ with tab2:
         else:
             select_demographic += " "
         
-        table_title = "Cancer Centers and " + select_sex + select_demographic + select_cancer_type + " cancer Incidence (*Select Sites by Clicking the Checkboxes in the Left Border of the Table*)"
+        table_title = "Cancer Centers and " + select_sex + select_demographic + " cancer Incidence (*Select Sites by Clicking the Checkboxes in the Left Border of the Table*)"
         
         st.markdown(
             """<label for="">""" +
@@ -397,19 +574,56 @@ with tab2:
             </label>""",
             unsafe_allow_html=True,
             )   
+        left_table_ui_column, right_table_ui_column = st.columns([1, 1], gap="small")  # 1:3 width ratio
+    
+        # Add content to the right column
+        with left_table_ui_column:
+            numeric_columns = df_to_display.select_dtypes(include=[numpy.number]).columns.tolist()
+            numeric_columns = [col for col in numeric_columns if col not in ["Latitude", "Longitude"]]
+            select_column_to_order = st.selectbox(
+                    "Select column to order by (descending)",
+                    numeric_columns,
+                    index=0)
+        with right_table_ui_column:
+            # Define the number of rows per page
+            rows_per_page = 30
+
+            # Calculate the total number of pages
+            total_rows = len(df_to_display)
+            total_pages = (total_rows + rows_per_page - 1) // rows_per_page  # Ceiling division
+
+            # Add a widget to select the page number
+            if total_pages > 1:
+                current_page = st.number_input(
+                    f"Page (n = {str(total_pages)})",
+                    min_value=1,
+                    max_value=total_pages,
+                    value=1,
+                    step=1,
+                    key="pagination"
+                )
+
+                # Calculate the start and end indices for the current page
+                start_idx = (current_page - 1) * rows_per_page
+                end_idx = start_idx + rows_per_page
+
+                # Slice the DataFrame for the current page
+                df_to_display = df_to_display.iloc[start_idx:end_idx]
+        # Sort the DataFrame by the selected column in descending order
+        df_to_display = df_to_display.sort_values(by=select_column_to_order, ascending=False)
         selected_sites = st.dataframe(
             df_to_display,
             #column_config=column_configuration,
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
-            selection_mode="multi-row",
-        )
-        st.write(selected_sites.selection.rows)
+            selection_mode="multi-row")
+            
+          
     
     # Add content to the left column
     with left_column_bottom:
-        map_tab, chart_tab = st.tabs(["Map", "Graphs"])
+        map_tab, llm_narrative = st.tabs(["Map", "LLM Narrative"])
 
         # Content for the first tab
         with map_tab:
@@ -467,7 +681,7 @@ with tab2:
             site_location_layer = pdk.Layer(
                 "TextLayer",
                 data=filtered_df,
-                get_position=["longitude", "latitude"],
+                get_position=["Longitude", "Latitude"],
                 get_text="site_shape",
                 get_size=20,  # Font size
                 get_color=[255, 255, 255],
@@ -493,46 +707,18 @@ with tab2:
                     initial_view_state=view_state
                 )
             )
-        with chart_tab:
-            
-            if filtered_df.shape[0] > 0:
-                incidence_column = incidence_column_start + select_cancer_type
-                   # Calculate the number of bins dynamically using Freedman-Diaconis Rule
-                       # Calculate the number of bins dynamically using Freedman-Diaconis Rule
-                data = filtered_df[incidence_column].dropna()  # Drop NaN values
-                q25, q75 = data.quantile(0.25), data.quantile(0.75)  # Calculate IQR
-                iqr = q75 - q25
-                bin_width = 2 * iqr / (len(data) ** (1 / 3))  # Freedman-Diaconis formula
-                num_bins = max(1, int((data.max() - data.min()) / bin_width))  # Ensure at least 1 bin
+            with llm_narrative:
+                if st.button("Generate LLM Narrative Summary", type="primary") and df_to_display.shape[0] > 0:
+                    make_narrative = True
+                    cancer_results = get_highest_incidence_cancer_site(df_to_display, cancer_sites)
+                    perc_urban = calculate_urban_rural_percentage(df_to_display)
+                    narrative_prompt = f"Give a concise summary of the following results. Do not mention demographic information other than sex. The site with the highest incidence is {cancer_results[0]} with a total incidence of {str(cancer_results[1])}. {perc_urban}% of the centers are urban. The selected states are {state_selection}. The selected demographic is {select_demographic}. The selected sex is {select_sex}. The 5 most relevant cancer centers to your query are: {", ".join(df_to_display["Place Name"].head(5).astype(str).tolist())}"
 
-                # Create bins and calculate counts
-                filtered_df["bins"] = pd.cut(filtered_df[incidence_column], bins=num_bins)
-                bin_counts = filtered_df["bins"].value_counts().sort_index()
-
-                # Convert bin counts to a DataFrame
-                bin_counts_df = bin_counts.reset_index()
-                bin_counts_df.columns = ["Bins", "Counts"]
-
-                # Convert Bins to ranges with scientific notation for large numbers
-                def format_bin_label(interval):
-                    left = f"{interval.left:.2e}" if abs(interval.left) > 1e3 else f"{interval.left:.2f}"
-                    right = f"{interval.right:.2e}" if abs(interval.right) > 1e3 else f"{interval.right:.2f}"
-                    return f"{left}-{right}"
-
-                bin_counts_df["Bins"] = bin_counts_df["Bins"].apply(format_bin_label)
-
-                # Create a bar chart with Plotly
-                fig = px.bar(
-                    bin_counts_df,
-                    x="Bins",
-                    y="Counts",
-                    title="Cancer Incidence within Centers's 2-hour Service Area Histogram",
-                    labels={"Bins": "Value Ranges", "Counts": "Frequency"},
-                )
-
-                # Rotate x-axis labels
-                fig.update_layout(xaxis_tickangle=45)
-
-                # Display the chart in Streamlit
-                st.plotly_chart(fig, use_container_width=True)
-   
+                    narrative = call_google_gemini(narrative_prompt,
+                        api_key = key,
+                        gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                        num_retries=3,
+                        delay_after_api_failure=5)
+                    st.write(narrative["text_output"])
+                   
+          
