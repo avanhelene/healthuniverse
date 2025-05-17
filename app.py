@@ -712,7 +712,8 @@ with tab2:
                     make_narrative = True
                     cancer_results = get_highest_incidence_cancer_site(df_to_display, cancer_sites)
                     perc_urban = calculate_urban_rural_percentage(df_to_display)
-                    narrative_prompt = f"Give a concise summary of the following results. Do not mention demographic information other than sex. The site with the highest incidence is {cancer_results[0]} with a total incidence of {str(cancer_results[1])}. {perc_urban}% of the centers are urban. The selected states are {state_selection}. The selected demographic is {select_demographic}. The selected sex is {select_sex}. The 5 most relevant cancer centers to your query are: {", ".join(df_to_display["Place Name"].head(5).astype(str).tolist())}"
+                    centers = ", ".join(df_to_display["Place Name"].head(5).astype(str).tolist())
+                    narrative_prompt = f"Give a concise summary of the following results. Do not mention demographic information other than sex. The site with the highest incidence is {cancer_results[0]} with a total incidence of {str(cancer_results[1])}. {perc_urban}% of the centers are urban. The selected states are {state_selection}. The selected demographic is {select_demographic}. The selected sex is {select_sex}. The 5 most relevant cancer centers to your query are: {centers}."
 
                     narrative = call_google_gemini(narrative_prompt,
                         api_key = key,
