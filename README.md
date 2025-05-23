@@ -1,1 +1,2 @@
 # healthuniverse
+This app helps clinical trial organizers find cancer centers to recruit patients from. You find cancer centers by filtering based on center rurality and state. Additionally, you can rank centers based on the cancer incidence within their 2-hour driving-time service areas or the number of clinical trials they have hosted. The app can be controlled with free text instructions by leveraging LLMs. This web app won first place during the 2025 Ci4CC hackathon.

@@ -7,6 +7,10 @@ import os
 import json
 import math
 import re
+import requests
+import time
+
+st.set_page_config(layout="wide")
 
 key = os.getenv("API_KEY")
 
@@ -15,10 +19,12 @@ geojson_dir = "data/geojson_states"
 geojson_file = "data/service_area_df_with_population_and_trial_counts.geojson"  # Replace with your file path
 
 # Read the GeoJSON file as a GeoPandas DataFrame
-cancer_center_service_areas = gpd.read_file(geojson_file)
+@st.cache_data
+def load_geojson_data(filepath):
+    return gpd.read_file(filepath)
 
-import requests
-import time
+# Use the cached function to load the GeoJSON file
+cancer_center_service_areas = load_geojson_data(geojson_file)
 
 control_ui_prompt = """
 "You are an assistant embedded in a web application. Based on user input, you will output a JSON object that controls the behaviour of the app."
@@ -215,8 +221,6 @@ def calculate_urban_rural_percentage(df):
     # Round to the nearest whole number and return as a formatted string
     return round(urban_percentage)
 
-st.set_page_config(layout="wide")
-
 st.markdown(
     """
     <style>
@@ -246,7 +250,7 @@ st.markdown(
 
     .tooltip .tooltiptext {
         visibility: hidden;
-        width: 200px;
+        width: 300px;
         background-color: #555;
         color: #fff;
         text-align: center;
@@ -254,7 +258,7 @@ st.markdown(
         padding: 5px;
         position: absolute;
         z-index: 1;
-        bottom: 125%; /* Position above the icon */
+        top: 125%; /* Position above the icon */
         left: 50%;
         margin-left: -100px;
         opacity: 0;
@@ -332,18 +336,9 @@ if "select_state" not in st.session_state:
     st.session_state.select_state = state_options
     
 # Create tabs
-tab1, tab2 = st.tabs(["Introduction", "Cancer Center Finder"])
+tab1, tab2 = st.tabs(["Cancer Center Finder", "Tutorial"])
 
-# Content for the first tab
 with tab1:
-    st.write("Welcome to the Cancer Center Finder App!")
-    st.write("This app allows you to explore cancer centers and their service areas across the United States.")
-    st.write("You can filter the data based on various criteria, including patient demographics.")
-    st.write("The app provides a map view and a table view of the cancer centers.")
-    st.write("This app is powered by Streamlit and Google Gemini.")
-    
-# Content for the second tab (current content)
-with tab2:
     #st.write(cancer_center_service_areas)
     # Create a two-column layout with the left column narrower
     left_column_top, right_column_top = st.columns([5, 2], gap="small")  # 1:3 width ratio
@@ -353,16 +348,16 @@ with tab2:
         st.markdown(
             """
             <label for="">
-            Control App Behavior with LLM Prompt or Generate Summary
+            Control App Behavior with LLM Prompt
                 <span class="tooltip">ℹ
-                    <span class="tooltiptext">Select one or more states to filter the data</span>
+                    <span class="tooltiptext">Control the app with free-text instructions instead of clicking buttons.</span>
                 </span>
             </label>
             """,
             unsafe_allow_html=True,
         )   
         txt = st.text_area(
-            "",
+            "placeholder",
             "",
             height=80,
             max_chars=100,
@@ -423,7 +418,7 @@ with tab2:
                 <label for="demographic-selection">
                     Select patient demographic to include in table
                     <span class="tooltip">ℹ
-                        <span class="tooltiptext">Select one or more states to filter the data</span>
+                        <span class="tooltiptext">This widget selects what demographic the cancer incidence data in the bottom right table corresponds to. For example, selecting 'Hispanic' will cause the table to show cancer incidence from the Hispanic population.</span>
                     </span>
                 </label>
                 """,
@@ -436,7 +431,7 @@ with tab2:
             
 
             select_demographic = st.selectbox(
-                "",
+                "placeholder",
                 demographic_options,
                 index=demographic_options.index(st.session_state.select_demographic),
                 label_visibility="collapsed", 
@@ -451,14 +446,14 @@ with tab2:
                 <label for="sex-selection">
                     Select patient sex to include in table
                     <span class="tooltip">ℹ
-                        <span class="tooltiptext">Select one or more states to filter the data</span>
+                        <span class="tooltiptext">Control what sex the cancer incidence data in the bottom right table corresponds to. For example, selecting 'Male' will cause the table to show cancer incidence from the Male population.</span>
                     </span>
                 </label>
                 """,
                 unsafe_allow_html=True,
                 )   
             select_sex = st.selectbox(
-                "",
+                "placeholder",
                 sex_options,
                 index=sex_options.index(st.session_state.select_sex),
                 label_visibility="collapsed",
@@ -466,22 +461,21 @@ with tab2:
             )
         with right_column_inner:
 
-
             st.markdown(
                 """
                 <label for="center-type-selection">
                     Select cancer center rurality
                     <span class="tooltip">ℹ
-                        <span class="tooltiptext">Select cancer center types to incude</span>
+                        <span class="tooltiptext">Filter cancer centers based on whether they are located in urban or rural/suburban areas.</span>
                     </span>
                 </label>
                 """,
                 unsafe_allow_html=True,
                 )   
             select_site_types = st.multiselect(
-                "",
+                "placeholder",
                 select_site_options,
-                default=st.session_state.select_site,
+                #default=st.session_state.select_site,
                 label_visibility="collapsed",
                 key="select_site"
             )
@@ -490,16 +484,16 @@ with tab2:
             <label for="">
                Filter cancer centers by state
                 <span class="tooltip">ℹ
-                    <span class="tooltiptext">Select one or more states to filter the data</span>
+                    <span class="tooltiptext">Select one or more states to filter the data.</span>
                 </span>
             </label>
             """,
             unsafe_allow_html=True,
         )   
         state_selection = st.multiselect(
-                "",
+                "placeholder",
                 state_options,
-                default=st.session_state.select_state,
+                #default=st.session_state.select_state,
                 label_visibility="collapsed",
                 key="select_state")
             
@@ -521,7 +515,6 @@ with tab2:
         
         columns_to_display.extend(incidence_columns)
 
-
         columns_to_display.extend([
             "Total Trial Count",
             "Leukemia Trial Count",                                              
@@ -542,184 +535,260 @@ with tab2:
             "Stomach Trial Count",                                               
             "Bladder Trial Count",                                               
             "Latitude", 
-            "Longitude"])
-
+            "Longitude",
+            "geometry"])
         
         cancer_center_service_areas = cancer_center_service_areas[cancer_center_service_areas["Rurality"].isin(select_site_types)]
         cancer_center_service_areas = cancer_center_service_areas[cancer_center_service_areas["State"].isin(state_selection)]
-        
-        df_to_display = cancer_center_service_areas[columns_to_display].copy()
-        incidence_column_start = incidence_column_start + "_"
-        df_to_display.columns = [col[len(incidence_column_start):] if col.startswith(incidence_column_start) else col for col in df_to_display.columns]
+        if not cancer_center_service_areas.empty:
+            df_to_display = cancer_center_service_areas[columns_to_display].copy()
+            incidence_column_start = incidence_column_start + "_"
+            df_to_display.columns = [col[len(incidence_column_start):] if col.startswith(incidence_column_start) else col for col in df_to_display.columns]
 
-        #cancer_center_service_areas
-        
-        if select_sex == "All":
-            select_sex = ""
-        else:
-            select_sex += " "
+            #cancer_center_service_areas
             
-        if select_demographic == "All":
-            select_demographic = ""
-        else:
-            select_demographic += " "
-        
-        table_title = "Cancer Centers and " + select_sex + select_demographic + " cancer Incidence (*Select Sites by Clicking the Checkboxes in the Left Border of the Table*)"
-        
-        st.markdown(
-            """<label for="">""" +
-            table_title +
-            """<span class="tooltip">ℹ<span class="tooltiptext">Select one or more states to filter the data</span>
-                </span>
-            </label>""",
-            unsafe_allow_html=True,
-            )   
+            if select_sex == "All":
+                select_sex = ""
+            else:
+                select_sex += " "
+                
+            if select_demographic == "All":
+                select_demographic = ""
+            else:
+                select_demographic += " "
+            
+            table_title = "Cancer Centers and " + select_sex + select_demographic + " cancer Incidence (*Select Sites by Clicking the Checkboxes in the Left Border of the Table*)"
+            
+            st.markdown(
+                """<label for="">""" +
+                table_title +
+                """<span class="tooltip">ℹ<span class="tooltiptext">Select one or more states to filter the data</span>
+                    </span>
+                </label>""",
+                unsafe_allow_html=True,
+                )   
         left_table_ui_column, right_table_ui_column = st.columns([1, 1], gap="small")  # 1:3 width ratio
     
         # Add content to the right column
         with left_table_ui_column:
-            numeric_columns = df_to_display.select_dtypes(include=[numpy.number]).columns.tolist()
-            numeric_columns = [col for col in numeric_columns if col not in ["Latitude", "Longitude"]]
-            select_column_to_order = st.selectbox(
-                    "Select column to order by (descending)",
-                    numeric_columns,
-                    index=0)
+            if not cancer_center_service_areas.empty:
+                numeric_columns = df_to_display.select_dtypes(include=[numpy.number]).columns.tolist()
+                numeric_columns = [col for col in numeric_columns if col not in ["Latitude", "Longitude"]]
+                select_column_to_order = st.selectbox(
+                        "Select column to order by (descending)",
+                        numeric_columns,
+                        index=0)
+                df_to_display = df_to_display.sort_values(by=select_column_to_order, ascending=False)
         with right_table_ui_column:
-            # Define the number of rows per page
-            rows_per_page = 30
+            if not cancer_center_service_areas.empty:
+                # Define the number of rows per page
+                rows_per_page = 60
 
-            # Calculate the total number of pages
-            total_rows = len(df_to_display)
-            total_pages = (total_rows + rows_per_page - 1) // rows_per_page  # Ceiling division
+                # Calculate the total number of pages
+                total_rows = len(df_to_display)
+                total_pages = (total_rows + rows_per_page - 1) // rows_per_page  # Ceiling division
 
-            # Add a widget to select the page number
-            if total_pages > 1:
-                current_page = st.number_input(
-                    f"Page (n = {str(total_pages)})",
-                    min_value=1,
-                    max_value=total_pages,
-                    value=1,
-                    step=1,
-                    key="pagination"
-                )
+                # Add a widget to select the page number
+                if total_pages > 1:
+                    current_page = st.number_input(
+                        f"Page (n = {str(total_pages)})",
+                        min_value=1,
+                        max_value=total_pages,
+                        value=1,
+                        step=1,
+                        key="pagination"
+                    )
 
-                # Calculate the start and end indices for the current page
-                start_idx = (current_page - 1) * rows_per_page
-                end_idx = start_idx + rows_per_page
+                    # Calculate the start and end indices for the current page
+                    start_idx = (current_page - 1) * rows_per_page
+                    end_idx = start_idx + rows_per_page
 
-                # Slice the DataFrame for the current page
-                df_to_display = df_to_display.iloc[start_idx:end_idx]
+                    # Slice the DataFrame for the current page
+                    df_to_display = df_to_display.iloc[start_idx:end_idx]
         # Sort the DataFrame by the selected column in descending order
-        df_to_display = df_to_display.sort_values(by=select_column_to_order, ascending=False)
-        selected_sites = st.dataframe(
-            df_to_display,
-            #column_config=column_configuration,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="multi-row")
+    # Sort the DataFrame by the selected column in descending order
+        
+        if not cancer_center_service_areas.empty:
+        # Render the dataframe
+            selected_sites = st.dataframe(
+                df_to_display.drop(columns=["geometry"]),
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="multi-row",
+                key="selected_rows"
+            )
+
+            # Update the selection state in session state
+            if "selected_rows_state" not in st.session_state:
+                st.session_state.selected_rows_state = []
+
+            # Access the selected rows
+            selected_rows = st.session_state.selected_rows_state
+            if selected_sites.selection:
+                st.session_state.selected_rows_state = selected_sites.selection.rows
             
           
     
     # Add content to the left column
     with left_column_bottom:
-        map_tab, llm_narrative = st.tabs(["Map", "LLM Narrative"])
+        if not cancer_center_service_areas.empty:
+            map_tab, llm_narrative = st.tabs(["Map", "LLM Narrative"])
 
-        # Content for the first tab
-        with map_tab:
-            geojson_files = load_geojson_files(geojson_dir, states = state_selection)
-            #st.warning(geojson_files)
-            
-            filtered_df = cancer_center_service_areas.iloc[selected_sites.selection.rows]
-            # Calculate bounds and center the map
-            if geojson_files:
-                min_lat, max_lat, min_lon, max_lon = calculate_bounds(geojson_files)
-                center_lat = (min_lat + max_lat) / 2
-                center_lon = (min_lon + max_lon) / 2
-                zoom = calculate_zoom(min_lat, max_lat, min_lon, max_lon)
-            else:
-                # Default view if no GeoJSON files are loaded
-                center_lat, center_lon, zoom = 37.7749, -122.4194, 4
-            
-            geojson_layers = [
-                pdk.Layer(
+            # Content for the first tab
+            with map_tab:
+                geojson_files = load_geojson_files(geojson_dir, states = state_selection)
+                #st.warning(geojson_files)
+                
+                filtered_df = df_to_display.iloc[selected_sites.selection.rows]
+                # Calculate bounds and center the map
+                if geojson_files:
+                    min_lat, max_lat, min_lon, max_lon = calculate_bounds(geojson_files)
+                    center_lat = (min_lat + max_lat) / 2
+                    center_lon = (min_lon + max_lon) / 2
+                    zoom = calculate_zoom(min_lat, max_lat, min_lon, max_lon)
+                else:
+                    # Default view if no GeoJSON files are loaded
+                    center_lat, center_lon, zoom = 37.7749, -122.4194, 4
+                
+                geojson_layers = [
+                    pdk.Layer(
+                        "GeoJsonLayer",
+                        data=geojson,
+                        get_fill_color="[200, 30, 0, 160]",  # Red fill color with transparency
+                        get_line_color="[255, 255, 255]",  # White border color
+                        line_width_min_pixels=1,
+                        pickable=True,
+                    )
+                    for geojson in geojson_files
+                ]
+                
+                filtered_geojson = json.loads(filtered_df.to_json())
+
+                # Create a GeoJsonLayer for filtered_df
+                filtered_layer = pdk.Layer(
                     "GeoJsonLayer",
-                    data=geojson,
-                    get_fill_color="[200, 30, 0, 160]",  # Red fill color with transparency
-                    get_line_color="[255, 255, 255]",  # White border color
+                    data=filtered_geojson,
+                    get_fill_color="[0, 100, 200, 160]",  # Blue fill color with transparency
+                    get_line_color="[255, 255, 255, 100]",  # White border color
                     line_width_min_pixels=1,
                     pickable=True,
                 )
-                for geojson in geojson_files
-            ]
-            
-            filtered_geojson = json.loads(filtered_df.to_json())
 
-            # Create a GeoJsonLayer for filtered_df
-            filtered_layer = pdk.Layer(
-                "GeoJsonLayer",
-                data=filtered_geojson,
-                get_fill_color="[0, 100, 200, 160]",  # Blue fill color with transparency
-                get_line_color="[255, 255, 255, 100]",  # White border color
-                line_width_min_pixels=1,
-                pickable=True,
-            )
+                # Add the filtered_df layer to geojson_layers
+                geojson_layers.append(filtered_layer)
+                
 
-            # Add the filtered_df layer to geojson_layers
-            geojson_layers.append(filtered_layer)
-            
-
-            # marker_layer = pdk.Layer(
-            #     "ScatterplotLayer",
-            #     data=filtered_df,
-            #     get_position=["longitude", "latitude"],  # Specify longitude and latitude columns
-            #     get_fill_color="[173, 216, 230, 240]",  # Green fill color with transparency
-            #     get_radius=10000,  # Radius of the markers
-            #     pickable=True,  # Enable interactivity
-            # )
-            filtered_df["site_shape"] = "+"
-            site_location_layer = pdk.Layer(
-                "TextLayer",
-                data=filtered_df,
-                get_position=["Longitude", "Latitude"],
-                get_text="site_shape",
-                get_size=20,  # Font size
-                get_color=[255, 255, 255],
-            )
-            # Add the marker layer to geojson_layers
-            geojson_layers.append(site_location_layer)
-            
-            # Define the map view
-            view_state = pdk.ViewState(
-                latitude=center_lat,  # Center latitude (San Francisco, for example)
-                longitude=center_lon,  # Center longitude
-                zoom=zoom,  # Zoom level
-                pitch=0,
-                height = 350
-            )
-
-            # Render the map with custom dimensions
-            
-            st.pydeck_chart(
-                pdk.Deck(
-                    layers=geojson_layers,
-                    map_style="mapbox://styles/mapbox/streets-v11",  # OpenStreetMap style
-                    initial_view_state=view_state
+                # marker_layer = pdk.Layer(
+                #     "ScatterplotLayer",
+                #     data=filtered_df,
+                #     get_position=["longitude", "latitude"],  # Specify longitude and latitude columns
+                #     get_fill_color="[173, 216, 230, 240]",  # Green fill color with transparency
+                #     get_radius=10000,  # Radius of the markers
+                #     pickable=True,  # Enable interactivity
+                # )
+                filtered_df["site_shape"] = "+"
+                site_location_layer = pdk.Layer(
+                    "TextLayer",
+                    data=filtered_df,
+                    get_position=["Longitude", "Latitude"],
+                    get_text="site_shape",
+                    get_size=20,  # Font size
+                    get_color=[255, 255, 255],
                 )
-            )
-            with llm_narrative:
-                if st.button("Generate LLM Narrative Summary", type="primary") and df_to_display.shape[0] > 0:
-                    make_narrative = True
-                    cancer_results = get_highest_incidence_cancer_site(df_to_display, cancer_sites)
-                    perc_urban = calculate_urban_rural_percentage(df_to_display)
-                    centers = ", ".join(df_to_display["Place Name"].head(5).astype(str).tolist())
-                    narrative_prompt = f"Give a concise summary of the following results. Do not mention demographic information other than sex. The site with the highest incidence is {cancer_results[0]} with a total incidence of {str(cancer_results[1])}. {perc_urban}% of the centers are urban. The selected states are {state_selection}. The selected demographic is {select_demographic}. The selected sex is {select_sex}. The 5 most relevant cancer centers to your query are: {centers}."
+                # Add the marker layer to geojson_layers
+                geojson_layers.append(site_location_layer)
+                
+                # Define the map view
+                view_state = pdk.ViewState(
+                    latitude=center_lat,  # Center latitude (San Francisco, for example)
+                    longitude=center_lon,  # Center longitude
+                    zoom=zoom,  # Zoom level
+                    pitch=0,
+                    height = 350
+                )
 
-                    narrative = call_google_gemini(narrative_prompt,
-                        api_key = key,
-                        gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-                        num_retries=3,
-                        delay_after_api_failure=5)
-                    st.write(narrative["text_output"])
-                   
-          
+                # Render the map with custom dimensions
+                
+                st.pydeck_chart(
+                    pdk.Deck(
+                        layers=geojson_layers,
+                        map_style="mapbox://styles/mapbox/streets-v11",  # OpenStreetMap style
+                        initial_view_state=view_state
+                    )
+                )
+                with llm_narrative:
+                    if st.button("Generate LLM Narrative Summary", type="primary") and df_to_display.shape[0] > 0:
+                        make_narrative = True
+                        cancer_results = get_highest_incidence_cancer_site(df_to_display, cancer_sites)
+                        perc_urban = calculate_urban_rural_percentage(df_to_display)
+                        centers = ", ".join(df_to_display["Place Name"].head(5).astype(str).tolist())
+                        narrative_prompt = f"Give a concise summary of the following results. Do not mention demographic information other than sex. The site with the highest incidence is {cancer_results[0]} with a total incidence of {str(cancer_results[1])}. {perc_urban}% of the centers are urban. The selected states are {state_selection}. The selected demographic is {select_demographic}. The selected sex is {select_sex}. The 5 most relevant cancer centers to your query are: {centers}."
+
+                        narrative = call_google_gemini(narrative_prompt,
+                            api_key = key,
+                            gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                            num_retries=3,
+                            delay_after_api_failure=5)
+                        st.write(narrative["text_output"])
+with tab2:
+    st.write("Welcome to the Cancer Center Finder App.")
+    st.markdown("Summary:<br>This app helps clinical trial organizers find cancer centers to recruit patients from.<br>You find cancer centers by filtering based on center rurality and state.<br>Additionally, you can rank centers based on the cancer incidence within their 2-hour driving-time service areas or the number of clinical trials they have hosted.<br>The app can be controlled with free text instructions by leveraging LLMs.<br>This web app won first place during the 2025 Ci4CC hackathon.",
+                unsafe_allow_html=True)   
+    st.markdown(
+        """
+        <hr style="border:1px solid #555; margin:10px 0;">
+        """,
+        unsafe_allow_html=True,
+    )
+    st.write("")
+    st.markdown("Filter the data you want displayed by patient demographic, sex, center rurality, and state.",
+            unsafe_allow_html=True)  
+    image_column_1, image_column_2 = st.columns([1.5, 1], gap="small")
+    with image_column_1:
+        st.image("data/screenshots_for_tutorial/filtering_widgets.png", 
+                 caption="App Screenshot")
+        st.markdown(
+            """
+            <hr style="border:1px solid #555; margin:10px 0;">
+            """,
+            unsafe_allow_html=True,
+        )
+    st.write("")
+    st.markdown("You can also control the app with free-text instructions.<br>For example, you can type 'Show me cancer centers in New York and display cancer incidence for white women.'",
+                unsafe_allow_html=True)
+    image_column_3, image_column_4 = st.columns([0.33, 1], gap="small")
+    with image_column_3:
+        st.image("data/screenshots_for_tutorial/llm_app_control_widget.png", 
+                 caption="App Screenshot")
+    image_column_5, image_column_6 = st.columns([1.5, 1], gap="small")
+    with image_column_5:
+        st.markdown(
+            """
+            <hr style="border:1px solid #555; margin:10px 0;">
+            """,
+            unsafe_allow_html=True,
+        )
+    st.write("")
+    image_column_7, image_column_8 = st.columns([1.5, 1], gap="small")
+    with image_column_7:
+        st.markdown("You can visualize the location and 2-hour driving-time service areas of cancer centers by checking the boxes in the table.",
+            unsafe_allow_html=True)
+        st.image("data/screenshots_for_tutorial/table_and_map.png", 
+                 caption="App Screenshot")
+        st.markdown(
+            """
+            <hr style="border:1px solid #555; margin:10px 0;">
+            """,
+            unsafe_allow_html=True,
+        )
+    st.write("")
+    st.markdown("Use the Google Gemini LLM to generate a narrative summary of the results.",
+            unsafe_allow_html=True)
+    image_column_9, image_column_10 = st.columns([0.5, 1], gap="small")
+    with image_column_9:
+        st.image("data/screenshots_for_tutorial/llm_narrative.png", 
+                caption="App Screenshot")
+    image_column_5, image_column_6 = st.columns([1.5, 1], gap="small")
+     
+            
