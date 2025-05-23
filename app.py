@@ -629,7 +629,12 @@ with tab1:
                 st.session_state.selected_rows_state = selected_sites.selection.rows
             
           
-    
+        st.markdown(
+            """
+            Cancer indidence data is from [CancerInFocus](https://doi.org/10.1158/1055-9965.EPI-22-1319) and the list of clinical trials from the [HemOnc knowledgebase](https://doi.org/10.7910/DVN/FPO4HB).
+            """,
+            unsafe_allow_html=True,
+        )
     # Add content to the left column
     with left_column_bottom:
         if not cancer_center_service_areas.empty:
