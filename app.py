@@ -40,20 +40,61 @@ Do not respond with any other text even if it makes sense to do so.
 
 """
 
-def get_response(prompt, API_KEY):
-    url = "https://health_universe_app_api.insight-dash.com/print-json"
+def call_google_gemini(prompt,
+                       api_key,
+                       gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                       num_retries=3,
+                       delay_after_api_failure=5):
+    """
+    Calls the Google Gemini API to generate content based on a given prompt.
+
+    Args:
+        prompt (str): The input prompt for the Gemini model.
+        api_key (str): Your Google API key.
+        gemini_endpoint (str): The endpoint for the Gemini API.
+        num_retries (int): Number of retries in case of failure.
+        delay_after_api_failure (int): Delay in seconds between retries.
+
+    Returns:
+        dict: The response from the Gemini API.
+    """
+    
+    # construct the endpoint URL with the API key and define payload
+    gemini_endpoint += f"?key={api_key}"
     headers = {
-        "Content-Type": "application/json",
-        "key": API_KEY
+        "Content-Type": "application/json"
     }
-    data = {
-        "text": prompt
+    payload = {
+        "contents": [{
+            "parts":[{"text": prompt}]
+    }]
     }
-    response = requests.post(url, headers=headers, json=data)
-    if response.status_code == 200:
-        return response.json()
-    else:
-        raise Exception(f"Error: {response.status_code} - {response.text}")
+
+    # retry logic for handling API failures
+    for i in range(num_retries + 1):
+        try:
+            response = requests.post(gemini_endpoint, headers=headers, json=payload)
+            if response.status_code == 200:
+                output = response.json()
+                text_output = output['candidates'][0]['content']['parts'][0]['text'].rstrip("\n")
+                input_tokens = output['usageMetadata']['promptTokenCount']
+                output_tokens = output['usageMetadata']['candidatesTokenCount']
+                output = {
+                    "text_output": text_output,
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens
+                }
+                return output
+            else:
+                print(f"Error: {response.status_code}, {response.text}")
+        except Exception as e:
+            print(f"Exception occurred: {e}")
+
+        if i < num_retries:
+            print(f"Retrying... ({i + 1}/{num_retries})")
+            time.sleep(delay_after_api_failure)
+        else:
+            raise Exception(f"Failed to call Gemini API after {num_retries} retries")
 
 # Function to load GeoJSON files
 def load_geojson_files(directory, states):
@@ -326,7 +367,11 @@ with tab1:
         if st.button("Control App with Free-Text Instructions", type="primary") and len(txt) > 0:
             
             try:
-                response = get_response(prompt=control_ui_prompt + txt, API_KEY=key)
+                response = call_google_gemini(control_ui_prompt + txt,
+                    api_key = key,
+                    gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                    num_retries=3,
+                    delay_after_api_failure=5)
                 if type(response) == dict:
                     json_string = response["text_output"]
             
@@ -692,10 +737,12 @@ with tab1:
                         centers = ", ".join(df_to_display["Place Name"].head(5).astype(str).tolist())
                         narrative_prompt = f"Give a concise summary of the following results. Do not mention demographic information other than sex. The site with the highest incidence is {cancer_results[0]} with a total incidence of {str(cancer_results[1])}. {perc_urban}% of the centers are urban. The selected states are {state_selection}. The selected demographic is {select_demographic}. The selected sex is {select_sex}. The 5 most relevant cancer centers to your query are: {centers}."
 
-
                         try:
-                            narrative = get_response(prompt = narrative_prompt,
-                                                    API_KEY=key)
+                            narrative = call_google_gemini(narrative_prompt,
+                                api_key = key,
+                                gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+                                num_retries=3,
+                                delay_after_api_failure=5)
                             st.write(narrative["text_output"])
                         except Exception as e:
                             st.error("API not reachable, please try again later")
