@@ -40,61 +40,20 @@ Do not respond with any other text even if it makes sense to do so.
 
 """
 
-def call_google_gemini(prompt,
-                       api_key,
-                       gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-                       num_retries=3,
-                       delay_after_api_failure=5):
-    """
-    Calls the Google Gemini API to generate content based on a given prompt.
-
-    Args:
-        prompt (str): The input prompt for the Gemini model.
-        api_key (str): Your Google API key.
-        gemini_endpoint (str): The endpoint for the Gemini API.
-        num_retries (int): Number of retries in case of failure.
-        delay_after_api_failure (int): Delay in seconds between retries.
-
-    Returns:
-        dict: The response from the Gemini API.
-    """
-    
-    # construct the endpoint URL with the API key and define payload
-    gemini_endpoint += f"?key={api_key}"
+def get_response(prompt, API_KEY):
+    url = "http://73.79.239.197:7777/print-json"
     headers = {
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "key": API_KEY
     }
-    payload = {
-        "contents": [{
-            "parts":[{"text": prompt}]
-    }]
+    data = {
+        "text": prompt
     }
-
-    # retry logic for handling API failures
-    for i in range(num_retries + 1):
-        try:
-            response = requests.post(gemini_endpoint, headers=headers, json=payload)
-            if response.status_code == 200:
-                output = response.json()
-                text_output = output['candidates'][0]['content']['parts'][0]['text'].rstrip("\n")
-                input_tokens = output['usageMetadata']['promptTokenCount']
-                output_tokens = output['usageMetadata']['candidatesTokenCount']
-                output = {
-                    "text_output": text_output,
-                    "input_tokens": input_tokens,
-                    "output_tokens": output_tokens
-                }
-                return output
-            else:
-                print(f"Error: {response.status_code}, {response.text}")
-        except Exception as e:
-            print(f"Exception occurred: {e}")
-
-        if i < num_retries:
-            print(f"Retrying... ({i + 1}/{num_retries})")
-            time.sleep(delay_after_api_failure)
-        else:
-            raise Exception(f"Failed to call Gemini API after {num_retries} retries")
+    response = requests.post(url, headers=headers, json=data)
+    if response.status_code == 200:
+        return response.json()
+    else:
+        raise Exception(f"Error: {response.status_code} - {response.text}")
 
 # Function to load GeoJSON files
 def load_geojson_files(directory, states):
@@ -366,42 +325,44 @@ with tab1:
 
         if st.button("Control App with Free-Text Instructions", type="primary") and len(txt) > 0:
             
-            response = call_google_gemini(control_ui_prompt + txt,
-                    api_key = key,
-                    gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-                    num_retries=3,
-                    delay_after_api_failure=5)
-            if type(response) == dict:
-                json_string = response["text_output"]
-        
-                #cleaned_json_string = response["text_output"].strip('"')
-                # Use a regular expression to extract the content inside the curly braces
-                match = re.search(r"\{.*\}", json_string, re.DOTALL)
-                if match:
-                    json_string = match.group(0) 
-                
-                    # with open("data/test.txt", "w") as file:
-                    #     file.write(json_string)
-                    gemini_output = json.loads(json_string)
-                    if all(item in ["select_demographic", "select_sex", "select_site", "state_selection"] for item in gemini_output.keys()):
-                        try:
-                            gemini_select_demographic = gemini_output["select_demographic"]
-                            if gemini_select_demographic in demographic_options and len(gemini_select_demographic) > 0:
-                                st.session_state.select_demographic = gemini_select_demographic
-                            gemini_select_sex = gemini_output["select_sex"]
-                            if gemini_select_sex in sex_options and len(gemini_select_sex) > 0:
-                                st.session_state.select_sex = gemini_select_sex
-                            gemini_select_site = gemini_output["select_site"]
-                            if all(item in select_site_options for item in gemini_select_site) and len(gemini_select_site) > 0:
-                                st.session_state.select_site = gemini_select_site
-                            gemini_select_state = gemini_output["state_selection"] 
-                            if all(item in state_options for item in gemini_select_state) and len(gemini_select_state) > 0:
-                                st.session_state.select_state = gemini_select_state
-                            # gemini_select_site = gemini_output["select_site"]
-                            # gemini_state_selection = gemini_output["state_selection"]
-                            
-                        except Exception as e:
-                            st.warning("LLM instruction failed. Please try again.")
+            try:
+                response = get_response(prompt=control_ui_prompt + txt, API_KEY=key)
+                if type(response) == dict:
+                    json_string = response["text_output"]
+            
+                    #cleaned_json_string = response["text_output"].strip('"')
+                    # Use a regular expression to extract the content inside the curly braces
+                    match = re.search(r"\{.*\}", json_string, re.DOTALL)
+                    if match:
+                        json_string = match.group(0) 
+                    
+                        # with open("data/test.txt", "w") as file:
+                        #     file.write(json_string)
+                        gemini_output = json.loads(json_string)
+                        if all(item in ["select_demographic", "select_sex", "select_site", "state_selection"] for item in gemini_output.keys()):
+                            try:
+                                gemini_select_demographic = gemini_output["select_demographic"]
+                                if gemini_select_demographic in demographic_options and len(gemini_select_demographic) > 0:
+                                    st.session_state.select_demographic = gemini_select_demographic
+                                gemini_select_sex = gemini_output["select_sex"]
+                                if gemini_select_sex in sex_options and len(gemini_select_sex) > 0:
+                                    st.session_state.select_sex = gemini_select_sex
+                                gemini_select_site = gemini_output["select_site"]
+                                if all(item in select_site_options for item in gemini_select_site) and len(gemini_select_site) > 0:
+                                    st.session_state.select_site = gemini_select_site
+                                gemini_select_state = gemini_output["state_selection"] 
+                                if all(item in state_options for item in gemini_select_state) and len(gemini_select_state) > 0:
+                                    st.session_state.select_state = gemini_select_state
+                                # gemini_select_site = gemini_output["select_site"]
+                                # gemini_state_selection = gemini_output["state_selection"]
+                                
+                            except Exception as e:
+                                st.warning("LLM instruction failed. Please try again.")
+            except Exception as e:
+                st.error("API not reachable, please try again later")
+                response = None
+
+
                                 
 
                     
@@ -628,13 +589,14 @@ with tab1:
             if selected_sites.selection:
                 st.session_state.selected_rows_state = selected_sites.selection.rows
             
-          
-        st.markdown(
-            """
-            Cancer incidence data is from [CancerInFocus](https://doi.org/10.1158/1055-9965.EPI-22-1319) and the list of clinical trials is from the [HemOnc knowledgebase](https://doi.org/10.7910/DVN/FPO4HB).
-            """,
-            unsafe_allow_html=True,
-        )
+            st.markdown(
+                """
+                <div style="text-align: right;">
+                    Cancer incidence data is from <a href="https://doi.org/10.1158/1055-9965.EPI-22-1319" target="_blank">CancerInFocus</a> and clinical trial data is from <a href="https://clinicaltrials.gov" target="_blank">clinicaltrials.gov</a> and the <a href="https://doi.org/10.7910/DVN/FPO4HB" target="_blank">HemOnc knowledgebase</a>.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
     # Add content to the left column
     with left_column_bottom:
         if not cancer_center_service_areas.empty:
@@ -730,12 +692,16 @@ with tab1:
                         centers = ", ".join(df_to_display["Place Name"].head(5).astype(str).tolist())
                         narrative_prompt = f"Give a concise summary of the following results. Do not mention demographic information other than sex. The site with the highest incidence is {cancer_results[0]} with a total incidence of {str(cancer_results[1])}. {perc_urban}% of the centers are urban. The selected states are {state_selection}. The selected demographic is {select_demographic}. The selected sex is {select_sex}. The 5 most relevant cancer centers to your query are: {centers}."
 
-                        narrative = call_google_gemini(narrative_prompt,
-                            api_key = key,
-                            gemini_endpoint="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-                            num_retries=3,
-                            delay_after_api_failure=5)
-                        st.write(narrative["text_output"])
+
+                        try:
+                            narrative = get_response(prompt = narrative_prompt,
+                                                    API_KEY=key)
+                            st.write(narrative["text_output"])
+                        except Exception as e:
+                            st.error("API not reachable, please try again later")
+                            response = None
+
+
 with tab2:
     st.write("Welcome to the Cancer Center Finder App.")
     st.markdown("Summary:<br>This app helps clinical trial organizers find cancer centers to recruit patients from.<br>You find cancer centers by filtering based on center rurality and state.<br>Additionally, you can rank centers based on the cancer incidence within their 2-hour driving-time service areas or the number of clinical trials they have hosted.<br>The app can be controlled with free text instructions by leveraging LLMs.<br>This web app won first place during the 2025 Ci4CC hackathon.",
