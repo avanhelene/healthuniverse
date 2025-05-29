@@ -41,7 +41,7 @@ Do not respond with any other text even if it makes sense to do so.
 """
 
 def get_response(prompt, API_KEY):
-    url = "http://73.79.239.197:7777/print-json"
+    url = "https://health_universe_app_api.insight-dash.com/print-json"
     headers = {
         "Content-Type": "application/json",
         "key": API_KEY
